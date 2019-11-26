@@ -28,15 +28,6 @@ function breakfast()
 {
     target=$1
     local variant=$2
-    CUSTOM_DEVICES_ONLY="true"
-    unset LUNCH_MENU_CHOICES
-    add_lunch_combo full-eng
-    for f in `/bin/ls device/*/*/vendorsetup.sh 2> /dev/null`
-        do
-            echo "including $f"
-            . $f
-        done
-    unset f
 
     if [ $# -eq 0 ]; then
         # No arguments, so let's have the full menu
@@ -49,7 +40,7 @@ function breakfast()
         else
             # This is probably just the omni model name
             if [ -z "$variant" ]; then
-                variant="userdebug"
+                variant="user"
             fi
             lunch omni_$target-$variant
         fi
@@ -100,7 +91,7 @@ function pushboot() {
 function repopick() {
     set_stuff_for_environment
     T=$(gettop)
-    $T/vendor/pb/build/tools/repopick.py $@
+    $T/vendor/omni/build/tools/repopick.py $@
 }
 
 function aospremote()

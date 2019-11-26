@@ -20,11 +20,9 @@ QCOM_BOARD_PLATFORMS += msm8994
 QCOM_BOARD_PLATFORMS += msm8996
 QCOM_BOARD_PLATFORMS += msm8998
 QCOM_BOARD_PLATFORMS += apq8084
-QCOM_BOARD_PLATFORMS += sdm632
 QCOM_BOARD_PLATFORMS += sdm660
 QCOM_BOARD_PLATFORMS += sdm710
 QCOM_BOARD_PLATFORMS += sdm845
-QCOM_BOARD_PLATFORMS += sm6150
 QCOM_BOARD_PLATFORMS += sm8150
 QCOM_BOARD_PLATFORMS += msmnile
 
@@ -39,8 +37,6 @@ QSD8K_BOARD_PLATFORMS := qsd8k
 
 
 # vars for use by utils
-empty :=
-space := $(empty) $(empty)
 colon := $(empty):$(empty)
 underscore := $(empty)_$(empty)
 

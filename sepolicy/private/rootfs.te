@@ -1,1 +1,2 @@
 allow rootfs labeledfs:filesystem associate;
+
