@@ -1,8 +1,7 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 
 # Copyright (C) 2013 Cybojenix <anthonydking@gmail.com>
 # Copyright (C) 2013 The OmniROM Project
-# Copyright (C) 2018 dotOS Project
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,6 +20,7 @@ from __future__ import print_function
 import json
 import sys
 import os
+import os.path
 import re
 from xml.etree import ElementTree as ES
 # Use the urllib importer from the Cyanogenmod roomservice
@@ -36,96 +36,82 @@ except ImportError:
 
 # Config
 # set this to the default remote to use in repo
-default_rem = "github"
+default_rem = "omnirom"
 # set this to the default revision to use (branch/tag name)
-def check():
-    found = ''
-    datafile = file('.repo/manifests/default.xml')
-    for line in datafile:
-#        for i in line:
-            if line.find('refs/tags') != -1:
-#                print(line.find('refs/tags'))
-                return (line[line.find('android'):line.find('_r')-2])
-
-default_rev = check()
-print(default_rev)
+default_rev = "android-9.0"
 # set this to the remote that you use for projects from your team repos
 # example fetch="https://github.com/omnirom"
-default_team_rem = "PitchBlackRecoveryProject"
+default_team_rem = "omnirom"
 # this shouldn't change unless google makes changes
 local_manifest_dir = ".repo/local_manifests"
 # change this to your name on github (or equivalent hosting)
-android_team = "PitchBlackRecoveryProject"
-
-def check_repo_exists(git_data):
-    if not int(git_data.get('total_count', 0)):
-        raise Exception("{} not found in {} Github, exiting "
-                        "roomservice".format(device, android_team))
+android_team = "omnirom"
+# url to gerrit repository
+gerrit_url = "gerrit.omnirom.org"
 
 
-# Note that this can only be done 5 times per minute
-def search_github_for_device(device):
-    git_device = '+'.join(re.findall('[a-z]+|[\d]+',  device))
-    git_search_url = "https://api.github.com/search/repositories" \
-                     "?q=%40{}+android_device+{}+fork:true".format(android_team, git_device)
+def check_repo_exists(git_data, device):
+    re_match = "^android_device_.*_{device}$".format(device=device)
+    matches = list(filter(lambda x: re.match(re_match, x), git_data))
+    if len(matches) != 1:
+        raise Exception("{device} not found,"
+                        "exiting roomservice".format(device=device))
+
+    return git_data[matches[0]]
+
+
+def search_gerrit_for_device(device):
+    # TODO: In next gerrit release regex search with r= should be supported!
+    git_search_url = "https://{gerrit_url}/projects/?m={device}".format(
+        gerrit_url=gerrit_url,
+        device=device
+    )
     git_req = urllib.request.Request(git_search_url)
     try:
         response = urllib.request.urlopen(git_req)
     except urllib.request.HTTPError:
-        raise Exception("There was an issue connecting to github."
-                        " Please try again in a minute")
-    git_data = json.load(response)
-    check_repo_exists(git_data)
-    print("found the {} device repo".format(device))
-    return git_data
-
-
-def get_device_url(git_data):
-    device_url = ""
-    for item in git_data['items']:
-        temp_url = item.get('html_url')
-        if "{}/android_device".format(android_team) in temp_url:
-            try:
-                temp_url = temp_url[temp_url.index("android_device"):]
-            except ValueError:
-                pass
-            else:
-                if temp_url.endswith("pbrp"):
-                    device_url = temp_url
-                    break
-
-    if device_url:
-        return device_url
-    raise Exception("{} not found in {} Github, exiting "
-                    "roomservice".format(device, android_team))
+        print("There was an issue connecting to gerrit."
+              " Please try again in a minute")
+    except urllib.request.URLError:
+        print("WARNING: No network connection available.")
+    else:
+        # Skip silly gerrit "header"
+        response.readline()
+        git_data = json.load(response)
+        device_data = check_repo_exists(git_data, device)
+        print("found the {} device repo".format(device))
+        return device_data
 
 
 def parse_device_directory(device_url, device):
-    to_strip = "android_device"
-    repo_name = device_url[device_url.index(to_strip) + len(to_strip):]
-    repo_name = repo_name[:repo_name.index(device)]
-    repo_dir = repo_name.replace("_", "/")
-    repo_dir = repo_dir + device
-    return "device{}".format(repo_dir)
+    pattern = "^android_device_(?P<vendor>.+)_{}$".format(device)
+    match = re.match(pattern, device_url)
+
+    if match is None:
+        raise Exception("Invalid project name {}".format(device_url))
+    return "device/{vendor}/{device}".format(
+        vendor=match.group('vendor'),
+        device=device,
+    )
 
 
 # Thank you RaYmAn
-def iterate_manifests(check_all):
+def iterate_manifests():
     files = []
-    if check_all:
-        for file in os.listdir(local_manifest_dir):
-            if file.endswith('.xml'):
-                files.append(os.path.join(local_manifest_dir, file))
+    for file in os.listdir(local_manifest_dir):
+        if file.endswith(".xml"):
+            files.append(os.path.join(local_manifest_dir, file))
     files.append('.repo/manifest.xml')
     for file in files:
         try:
             man = ES.parse(file)
             man = man.getroot()
-        except IOError, ES.ParseError:
+        except (IOError, ES.ParseError):
             print("WARNING: error while parsing %s" % file)
         else:
             for project in man.findall("project"):
                 yield project
+
 
 def iterate_manifests_remove_project():
     files = []
@@ -143,11 +129,14 @@ def iterate_manifests_remove_project():
             for project in man.findall("remove-project"):
                 yield project
 
-def check_project_exists(url):
-    for project in iterate_manifests(True):
-        if project.get("name") == url:
+def check_project_exists(url, revision, path):
+    for project in iterate_manifests():
+        if project.get("name") == url \
+                and project.get("revision") == revision \
+                and project.get("path") == path:
             return True
     return False
+
 
 def check_remove_project_exists(url):
     for project in iterate_manifests_remove_project():
@@ -155,13 +144,9 @@ def check_remove_project_exists(url):
             return True
     return False
 
+def check_target_exists(directory):
+    return os.path.isdir(directory)
 
-def check_dup_path(directory):
-    for project in iterate_manifests(False):
-        if project.get("path") == directory:
-            print ("Duplicate path %s found! Removing" % directory)
-            return project.get("name")
-    return None
 
 # Use the indent function from http://stackoverflow.com/a/4590052
 def indent(elem, level=0):
@@ -180,19 +165,13 @@ def indent(elem, level=0):
             elem.tail = i
 
 
-def create_manifest_project(url, directory, override,
+def create_manifest_project(url, directory,
                             remote=default_rem,
                             revision=default_rev):
-    project_exists = check_project_exists(url)
+    project_exists = check_project_exists(url, revision, directory)
 
-    if project_exists and override is None:
+    if project_exists:
         return None
-
-    dup_path = check_dup_path(directory)
-    if not dup_path is None and override is None:
-            write_to_manifest(
-                append_to_manifest(
-                    create_manifest_remove(dup_path)))
 
     project = ES.Element("project",
                          attrib={
@@ -215,17 +194,11 @@ def create_remove_project(url):
                          })
     return project
 
-
-def create_manifest_remove(url):
-    remove = ES.Element("remove-project", attrib={"name": url})
-    return remove
-
-
 def append_to_manifest(project):
     try:
         lm = ES.parse('/'.join([local_manifest_dir, "roomservice.xml"]))
         lm = lm.getroot()
-    except IOError, ES.ParseError:
+    except (IOError, ES.ParseError):
         lm = ES.Element("manifest")
     lm.append(project)
     return lm
@@ -242,8 +215,9 @@ def write_to_manifest(manifest):
         f.write(raw_xml)
     print("wrote the new roomservice manifest")
 
+
 def parse_device_from_manifest(device):
-    for project in iterate_manifests(True):
+    for project in iterate_manifests():
         name = project.get('name')
         if name.startswith("android_device_") and name.endswith(device):
             return project.get('path')
@@ -252,6 +226,8 @@ def parse_device_from_manifest(device):
 
 def parse_device_from_folder(device):
     search = []
+    if not os.path.isdir("device"):
+        os.mkdir("device")
     for sub_folder in os.listdir("device"):
         if os.path.isdir("device/%s/%s" % (sub_folder, device)):
             search.append("device/%s/%s" % (sub_folder, device))
@@ -262,7 +238,7 @@ def parse_device_from_folder(device):
     elif len(search) == 1:
         location = search[0]
     else:
-        print("your device can't be found in device sources..")
+        print("Your device can't be found in device sources..")
         location = parse_device_from_manifest(device)
     return location
 
@@ -288,23 +264,25 @@ def check_manifest_problems(dependencies):
         repository = dependency.get("repository")
         target_path = dependency.get("target_path")
         revision = dependency.get("revision", default_rev)
-        remote = dependency.get("remote", default_rem)
-        override = dependency.get("override", None)
 
         # check for existing projects
-        for project in iterate_manifests(True):
-            if project.get("revision") is not None and project.get("path") is not None:
-                if project.get("path") == target_path and project.get("revision") != revision and override is None:
-                    print("WARNING: detected conflict in revisions for repository ", repository)
-                    current_dependency = str(project.get(repository))
-                    file = ES.parse('/'.join([local_manifest_dir, "roomservice.xml"]))
-                    file_root = file.getroot()
-                    for current_project in file_root.findall('project'):
-                        new_dependency = str(current_project.find('revision'))
-                        if new_dependency == current_dependency:
-                            file_root.remove(current_project)
-                    file.write('/'.join([local_manifest_dir, "roomservice.xml"]))
-                    return
+        for project in iterate_manifests():
+            if project.get("revision") is not None \
+                    and project.get("path") is not None \
+                    and project.get("path") == target_path \
+                    and project.get("revision") != revision:
+                print("WARNING: detected conflict in revisions for repository ",
+                      repository)
+                current_dependency = str(project.get(repository))
+                file = ES.parse('/'.join([local_manifest_dir,
+                                          "roomservice.xml"]))
+                file_root = file.getroot()
+                for current_project in file_root.findall('project'):
+                    new_dependency = str(current_project.find('revision'))
+                    if new_dependency == current_dependency:
+                        file_root.remove(current_project)
+                file.write('/'.join([local_manifest_dir, "roomservice.xml"]))
+                return
 
 
 def create_dependency_manifest(dependencies):
@@ -315,7 +293,7 @@ def create_dependency_manifest(dependencies):
         revision = dependency.get("revision", default_rev)
         remote = dependency.get("remote", default_rem)
         override = dependency.get("override", None)
-
+        
         if override is not None:
             #print("found override in ", repository)
             project = create_remove_project(repository)
@@ -327,13 +305,13 @@ def create_dependency_manifest(dependencies):
         # not adding an organization should default to android_team
         # only apply this to github
         if remote == "github":
-            if not "/" in repository:
+            if "/" not in repository:
                 repository = '/'.join([android_team, repository])
         project = create_manifest_project(repository,
-                                          target_path, override,
+                                          target_path,
                                           remote=remote,
                                           revision=revision)
-        if not project is None:
+        if project is not None:
             manifest = append_to_manifest(project)
             write_to_manifest(manifest)
             projects.append(target_path)
@@ -364,7 +342,7 @@ def create_common_dependencies_manifest(dependencies):
 
                     if common_deps is not None:
                         print("Looking for dependencies on: ",
-                               dependency['target_path'])
+                              dependency['target_path'])
                         check_manifest_problems(common_deps)
                         create_dependency_manifest(common_deps)
                         create_common_dependencies_manifest(common_deps)
@@ -392,18 +370,20 @@ def check_device_exists(device):
 def fetch_device(device):
     if check_device_exists(device):
         print("WARNING: Trying to fetch a device that's already there")
-        return
-    git_data = search_github_for_device(device)
-    device_url = get_device_url(git_data)
-    device_dir = parse_device_directory(device_url,device)
-    project = create_manifest_project(device_url,
-                                      device_dir,
-                                      remote=default_team_rem)
-    if not project is None:
-        manifest = append_to_manifest(project)
-        write_to_manifest(manifest)
-        print("syncing the device config")
-        os.system('repo sync --force-sync %s' % device_dir)
+    git_data = search_gerrit_for_device(device)
+    if git_data is not None:
+        device_url = git_data['id']
+        device_dir = parse_device_directory(device_url, device)
+        project = create_manifest_project(device_url,
+                                          device_dir,
+                                          remote=default_team_rem)
+        if project is not None:
+            manifest = append_to_manifest(project)
+            write_to_manifest(manifest)
+        # In case a project was written to manifest, but never synced
+        if project is not None or not check_target_exists(device_dir):
+            print("syncing the device config")
+            os.system('repo sync -f --no-clone-bundle %s' % device_dir)
 
 
 if __name__ == '__main__':
